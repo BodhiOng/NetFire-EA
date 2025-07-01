@@ -61,13 +61,44 @@ struct Trendline {
         ObjectSet(name, OBJPROP_STYLE, style);
         ObjectSet(name, OBJPROP_WIDTH, width);
         ObjectSet(name, OBJPROP_RAY, extendRight);
-
-        // Set the trendline's points - adjusted for 1-minute timeframe
-        // Start from current time
-        ObjectSet(name, OBJPROP_TIME1, iTime(Symbol(), PERIOD_M1, 0));
+        
+        // Get current chart timeframe
+        int currentTimeframe = Period();
+        int timeExtension;
+        
+        // Dynamically adjust trendline length based on timeframe
+        switch(currentTimeframe)
+        {
+            case PERIOD_M1:  // 1 minute
+                timeExtension = 60 * 5;  // 5 minutes
+                break;
+            case PERIOD_M5:  // 5 minutes
+                timeExtension = 60 * 25;  // 25 minutes
+                break;
+            case PERIOD_M15:  // 15 minutes
+                timeExtension = 60 * 75;  // 75 minutes
+                break;
+            case PERIOD_M30:  // 30 minutes
+                timeExtension = 60 * 150;  // 150 minutes
+                break;
+            case PERIOD_H1:  // 1 hour
+                timeExtension = 3600 * 5;  // 5 hours
+                break;
+            case PERIOD_H4:  // 4 hours
+                timeExtension = 3600 * 20;  // 20 hours
+                break;
+            case PERIOD_D1:  // 1 day
+                timeExtension = 86400 * 5;  // 5 days
+                break;
+            default:  // For any other timeframe
+                timeExtension = 86400;  // 1 day
+                break;
+        }
+        
+        // Set the trendline's points based on current timeframe
+        ObjectSet(name, OBJPROP_TIME1, iTime(Symbol(), currentTimeframe, 0));
         ObjectSet(name, OBJPROP_PRICE1, price);
-        // End at 120 minutes (2 hours) from now - better fit for 1-minute chart
-        ObjectSet(name, OBJPROP_TIME2, iTime(Symbol(), PERIOD_M1, 0) + 120*60);
+        ObjectSet(name, OBJPROP_TIME2, iTime(Symbol(), currentTimeframe, 0) + timeExtension);
         ObjectSet(name, OBJPROP_PRICE2, price);
     }
 };
