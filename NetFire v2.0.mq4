@@ -193,9 +193,13 @@ void OnTick() {
    
     TrailMonitor(); // trailing module
    
-    // Only allow trading if trendlines have been manually modified
-    if(!trendlines_modified) {
-        Comment("\n\n\nWaiting for trendlines to be manually adjusted before trading");
+    // Only allow trading if trendlines have been manually modified and are not marked as dead
+    if(!trendlines_modified || (upper_tl_dead && lower_tl_dead)) {
+        if(!trendlines_modified) {
+            Comment("\n\n\nWaiting for trendlines to be manually adjusted before trading");
+        } else {
+            Comment("\n\n\nTrendlines are marked as used. Please create new trendlines for trading.");
+        }
         return;
     }
    
@@ -319,8 +323,13 @@ void OpenSell() {
         fix_lower = Bid;
        // Order opened successfully
         state = 1;
-        ObjectDelete(tl_upper.name);
-        ObjectDelete(tl_lower.name);
+        // Mark trendlines as dead instead of deleting them
+        upper_tl_dead = true;
+        lower_tl_dead = true;
+        
+        // Change trendline color to indicate they're dead (gray)
+        if(ObjectFind(tl_upper.name) >= 0) ObjectSet(tl_upper.name, OBJPROP_COLOR, clrDarkGray);
+        if(ObjectFind(tl_lower.name) >= 0) ObjectSet(tl_lower.name, OBJPROP_COLOR, clrDarkGray);
        
         double price = Bid;
         string name = "sell_level";
@@ -357,8 +366,13 @@ void OpenBuy() {
         fix_upper = Ask;
        // Order opened successfully
         state = 1;
-        ObjectDelete(tl_upper.name);
-        ObjectDelete(tl_lower.name);
+        // Mark trendlines as dead instead of deleting them
+        upper_tl_dead = true;
+        lower_tl_dead = true;
+        
+        // Change trendline color to indicate they're dead (gray)
+        if(ObjectFind(tl_upper.name) >= 0) ObjectSet(tl_upper.name, OBJPROP_COLOR, clrDarkGray);
+        if(ObjectFind(tl_lower.name) >= 0) ObjectSet(tl_lower.name, OBJPROP_COLOR, clrDarkGray);
        
         double price = Ask;
         string name = "buy_level";
@@ -479,6 +493,10 @@ void string_to_array_double(string someString, double &someArray[]) {
 Trendline tl_upper;
 Trendline tl_lower;
 
+// Variables to track if trendlines are "dead" (already used for trading)
+bool upper_tl_dead = false;
+bool lower_tl_dead = false;
+
 bool IsOrderClosed(int ticket_number) {
     bool is_closed = false;
     if(OrderSelect(ticket_number, SELECT_BY_TICKET))
@@ -598,16 +616,23 @@ void ProcessButtonClicks() {
         // Reset button state
         ObjectSet(edit_button_name, OBJPROP_STATE, false);
         
+        // When switching from edit mode to trading mode, reset the trendline dead flags
+        if(!edit_mode) {
+            // Reset trendline dead flags to allow trading with existing trendlines
+            upper_tl_dead = false;
+            lower_tl_dead = false;
+        }
+        
         // Update button appearance
         updateEditButton();
         
         // Show appropriate message
         if(edit_mode) {
-            Comment("EDIT MODE: Adjust trendlines as needed, then click button to start trading");
+            Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
         } else if(trendlines_modified) {
-            Comment("TRADING MODE: EA will now execute trades based on trendlines");
+            Comment("\n\n\nTRADING MODE: EA will now execute trades based on trendlines");
         } else {
-            Comment("TRADING MODE: Waiting for trendlines to be manually adjusted before trading");
+            Comment("\n\n\nTRADING MODE: Waiting for trendlines to be manually adjusted before trading");
         }
     }
 }
