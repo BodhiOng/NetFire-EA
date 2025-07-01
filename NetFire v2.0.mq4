@@ -137,6 +137,10 @@ int OnInit() {
     // Create edit mode button
     createEditButton();
    
+    // Enable keyboard events for the chart
+    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true); // This enables all chart events including keyboard
+    ChartSetInteger(0, CHART_KEYBOARD_CONTROL, true); // Specifically enable keyboard control
+   
     tl_mode_active = tl_mode;
 
     return(INIT_SUCCEEDED);
@@ -157,6 +161,7 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
         updateButtonPosition();
     }
 }
+
 
 // Function to update button position based on current chart size
 void updateButtonPosition() {
@@ -616,11 +621,29 @@ void ProcessButtonClicks() {
         // Reset button state
         ObjectSet(edit_button_name, OBJPROP_STATE, false);
         
-        // When switching from edit mode to trading mode, reset the trendline dead flags
         if(!edit_mode) {
-            // Reset trendline dead flags to allow trading with existing trendlines
+            // When switching from edit mode to trading mode, reset the trendline dead flags
             upper_tl_dead = false;
             lower_tl_dead = false;
+        } else {
+            // When switching to edit mode, always create new trendlines
+            // Delete existing trendlines
+            ObjectDelete(tl_upper.name);
+            ObjectDelete(tl_lower.name);
+            
+            // Reset dead flags
+            upper_tl_dead = false;
+            lower_tl_dead = false;
+            
+            // Create new trendlines with a wider gap for better visibility
+            createLines(initial_gap * Point);
+            
+            // Force multiple chart redraws to ensure trendlines appear
+            WindowRedraw();
+            ChartRedraw();
+            
+            // Print debug info
+            Print("New trendlines created on mode switch: Upper=", tl_upper.name, " Lower=", tl_lower.name);
         }
         
         // Update button appearance
@@ -666,8 +689,4 @@ void createLines(double gap_pt) {
     trendlines_modified = false;
     last_upper_tl_time = 0;
     last_lower_tl_time = 0;
-    
-    // Switch to edit mode when new lines are created
-    edit_mode = true;
-    updateEditButton();
 }
