@@ -46,7 +46,6 @@ double bep_level;
 // Edit mode variables
 bool edit_mode = true; // Start in edit mode by default
 string edit_button_name = "EditModeButton";
-string edit_button_text = "Switch to Trading Mode";
 color edit_button_color = clrRed;
 color trading_button_color = clrGreen;
 
@@ -150,11 +149,31 @@ void OnDeinit(const int reason) {
     ObjectDelete(edit_button_name);
 }
 
+// Chart event handler function
+void OnChartEvent(const int id, const long& lparam, const double& dparam, const string& sparam) {
+    // Check if chart was resized
+    if(id == CHARTEVENT_CHART_CHANGE) {
+        // Update button position
+        updateButtonPosition();
+    }
+}
+
+// Function to update button position based on current chart size
+void updateButtonPosition() {
+    // Get current chart dimensions
+    int chart_width = ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+    int chart_height = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+    
+    // Update button position to stay at bottom left
+    ObjectSet(edit_button_name, OBJPROP_XDISTANCE, 10);
+    ObjectSet(edit_button_name, OBJPROP_YDISTANCE, chart_height - 40); // 40px from bottom
+}
+
 // Expert tick function
 void OnTick() {
    //---
     if(cycle_done) {
-        Comment("Cycle is done, last order is in profit");
+        Comment("\n\n\nCycle is done, last order is in profit");
         return;
     }
     
@@ -166,7 +185,7 @@ void OnTick() {
     
     // If in edit mode, don't execute trades
     if(edit_mode) {
-        Comment("EDIT MODE: Adjust trendlines as needed, then click button to start trading");
+        Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
         return;
     }
    
@@ -176,7 +195,7 @@ void OnTick() {
    
     // Only allow trading if trendlines have been manually modified
     if(!trendlines_modified) {
-        Comment("Waiting for trendlines to be manually adjusted before trading");
+        Comment("\n\n\nWaiting for trendlines to be manually adjusted before trading");
         return;
     }
    
@@ -198,7 +217,7 @@ void LossAccumulator() {
             if(pnl > 0) {
                 cycle_done = true;
             } else {
-                acc_loss + = pnl;
+                acc_loss += pnl;
                 last_tk_recorded = recent_tk;
             }
         }
@@ -505,7 +524,7 @@ void CheckTrendlineModification() {
     {
         trendlines_modified = true;
         if(!edit_mode) {
-            Comment("Trendlines modified - Trading enabled");
+            Comment("\n\n\nTrendlines modified - Trading enabled");
         }
     }
     
@@ -537,11 +556,18 @@ void createEditButton() {
     // Create button object
     ObjectCreate(edit_button_name, OBJ_BUTTON, 0, 0, 0);
     
+    // Position at bottom left of the chart
+    int chart_width = ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+    int chart_height = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+    
     // Set button position and size
     ObjectSet(edit_button_name, OBJPROP_XDISTANCE, 10);
-    ObjectSet(edit_button_name, OBJPROP_YDISTANCE, 10);
-    ObjectSet(edit_button_name, OBJPROP_XSIZE, 200);
-    ObjectSet(edit_button_name, OBJPROP_YSIZE, 30);
+    ObjectSet(edit_button_name, OBJPROP_YDISTANCE, chart_height - 40); // 40px from bottom
+    ObjectSet(edit_button_name, OBJPROP_XSIZE, 250);
+    ObjectSet(edit_button_name, OBJPROP_YSIZE, 40);
+    
+    // Set text color to white
+    ObjectSet(edit_button_name, OBJPROP_COLOR, clrWhite);
     
     // Update button text and color based on current mode
     updateEditButton();
@@ -550,9 +576,15 @@ void createEditButton() {
 // Update the edit button text and color based on current mode
 void updateEditButton() {
     if(edit_mode) {
-        ObjectSetText(edit_button_name, "Switch to Trading Mode", 10, "Arial", edit_button_color);
+        // Edit mode - Red button
+        ObjectSetText(edit_button_name, "EDIT MODE", 9, "Arial Bold", clrWhite);
+        ObjectSet(edit_button_name, OBJPROP_BGCOLOR, edit_button_color);
+        ObjectSet(edit_button_name, OBJPROP_COLOR, clrWhite);
     } else {
-        ObjectSetText(edit_button_name, "Switch to Edit Mode", 10, "Arial", trading_button_color);
+        // Trading mode - Green button
+        ObjectSetText(edit_button_name, "TRADING MODE", 9, "Arial Bold", clrWhite);
+        ObjectSet(edit_button_name, OBJPROP_BGCOLOR, trading_button_color);
+        ObjectSet(edit_button_name, OBJPROP_COLOR, clrWhite);
     }
 }
 
