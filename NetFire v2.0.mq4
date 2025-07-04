@@ -14,7 +14,7 @@ enum MODE_TL {
     MODE_TL_MID = 2
 };
 
-input double initial_gap = 100.0;
+input double initial_gap = 20.0;
 input int magic = 12345;
 input double sl_pips = 50;
 input double bep_trigger_pips = 30;
@@ -49,10 +49,12 @@ string edit_button_name = "EditModeButton";
 color edit_button_color = clrRed;
 color trading_button_color = clrGreen;
 
-// Flag to track if trendlines have been manually modified
-bool trendlines_modified = false;
+// Variables to track trendline times
 datetime last_upper_tl_time = 0;
 datetime last_lower_tl_time = 0;
+
+// Static variable to remember mode across timeframe changes
+static bool last_mode_was_edit = true;
 
 MODE_TL tl_mode_active;
 
@@ -127,18 +129,24 @@ int OnInit() {
     bep_in_place = false;
     monitor_bep_level = false;
     bep_level = 0;
-    trendlines_modified = false;
+
     last_upper_tl_time = 0;
     last_lower_tl_time = 0;
     
-    // Set initial edit mode from input parameter
-    edit_mode = start_in_edit_mode;
+    // Set initial edit mode from input parameter or restore from previous timeframe
+    if(UninitializeReason() == REASON_CHARTCHANGE) {
+        // Restore previous mode when changing timeframes
+        edit_mode = last_mode_was_edit;
+    } else {
+        // Use input parameter for initial start
+        edit_mode = start_in_edit_mode;
+    }
     
     // Create edit mode button
     createEditButton();
    
     // Enable keyboard events for the chart
-    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true); // This enables all chart events including keyboard
+    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true); // Enable chart events
     ChartSetInteger(0, CHART_KEYBOARD_CONTROL, true); // Specifically enable keyboard control
    
     tl_mode_active = tl_mode;
@@ -148,9 +156,18 @@ int OnInit() {
 
 // Expert deinitialization function
 void OnDeinit(const int reason) {
-    ObjectDelete("Upper Trendline");
-    ObjectDelete("Lower Trendline");
-    ObjectDelete(edit_button_name);
+    // Only delete objects when the EA is being removed, not when switching timeframes
+    // Timeframe change is reason code 3 (REASON_CHARTCHANGE)
+    if(reason != REASON_CHARTCHANGE) {
+        ObjectDelete("Upper Trendline");
+        ObjectDelete("Lower Trendline");
+        ObjectDelete(edit_button_name);
+        // Objects deleted when EA is removed
+    } else {
+        // Save current mode before timeframe change
+        last_mode_was_edit = edit_mode;
+        // Mode preserved when changing timeframes
+    }
 }
 
 // Chart event handler function
@@ -185,8 +202,7 @@ void OnTick() {
     // Process button clicks
     ProcessButtonClicks();
    
-    // Check if trendlines have been modified
-    CheckTrendlineModification();
+
     
     // If in edit mode, don't execute trades
     if(edit_mode) {
@@ -198,13 +214,9 @@ void OnTick() {
    
     TrailMonitor(); // trailing module
    
-    // Only allow trading if trendlines have been manually modified and are not marked as dead
-    if(!trendlines_modified || (upper_tl_dead && lower_tl_dead)) {
-        if(!trendlines_modified) {
-            Comment("\n\n\nWaiting for trendlines to be manually adjusted before trading");
-        } else {
-            Comment("\n\n\nTrendlines are marked as used. Please create new trendlines for trading.");
-        }
+    // Only check if trendlines are marked as dead (used)
+    if(upper_tl_dead && lower_tl_dead) {
+        Comment("\n\n\nTrendlines are marked as used. Please create new trendlines for trading.");
         return;
     }
    
@@ -324,6 +336,7 @@ void OpenSell() {
    
     if(result > 0)
     {
+        Print("SELL order executed successfully, ticket #", result, ", marking trendlines as dead");
         recent_tk = result;
         fix_lower = Bid;
        // Order opened successfully
@@ -335,6 +348,8 @@ void OpenSell() {
         // Change trendline color to indicate they're dead (gray)
         if(ObjectFind(tl_upper.name) >= 0) ObjectSet(tl_upper.name, OBJPROP_COLOR, clrDarkGray);
         if(ObjectFind(tl_lower.name) >= 0) ObjectSet(tl_lower.name, OBJPROP_COLOR, clrDarkGray);
+        
+        Print("Trendlines marked as dead: upper=", upper_tl_dead, " lower=", lower_tl_dead);
        
         double price = Bid;
         string name = "sell_level";
@@ -367,6 +382,7 @@ void OpenBuy() {
    
     if(result > 0)
     {
+        Print("BUY order executed successfully, ticket #", result, ", marking trendlines as dead");
         recent_tk = result;
         fix_upper = Ask;
        // Order opened successfully
@@ -378,6 +394,8 @@ void OpenBuy() {
         // Change trendline color to indicate they're dead (gray)
         if(ObjectFind(tl_upper.name) >= 0) ObjectSet(tl_upper.name, OBJPROP_COLOR, clrDarkGray);
         if(ObjectFind(tl_lower.name) >= 0) ObjectSet(tl_lower.name, OBJPROP_COLOR, clrDarkGray);
+        
+        Print("Trendlines marked as dead: upper=", upper_tl_dead, " lower=", lower_tl_dead);
        
         double price = Ask;
         string name = "buy_level";
@@ -528,33 +546,7 @@ double GetOrderType(int ticket_number) {
     return type;
 }
 
-// Function to check if trendlines have been manually modified
-void CheckTrendlineModification() {
-    // Get the current modification times of the trendlines
-    datetime upper_tl_time = (datetime)ObjectGet(tl_upper.name, OBJPROP_TIME1);
-    datetime lower_tl_time = (datetime)ObjectGet(tl_lower.name, OBJPROP_TIME1);
-    
-    // Check if this is the first time we're recording the times
-    if(last_upper_tl_time == 0 && last_lower_tl_time == 0)
-    {
-        last_upper_tl_time = upper_tl_time;
-        last_lower_tl_time = lower_tl_time;
-        return;
-    }
-    
-    // Check if either trendline has been modified
-    if(upper_tl_time != last_upper_tl_time || lower_tl_time != last_lower_tl_time)
-    {
-        trendlines_modified = true;
-        if(!edit_mode) {
-            Comment("\n\n\nTrendlines modified - Trading enabled");
-        }
-    }
-    
-    // Update the last known times
-    last_upper_tl_time = upper_tl_time;
-    last_lower_tl_time = lower_tl_time;
-}
+
 
 int CountOrders(int operation_type) {
     int count = 0;
@@ -638,12 +630,9 @@ void ProcessButtonClicks() {
             // Create new trendlines with a wider gap for better visibility
             createLines(initial_gap * Point);
             
-            // Force multiple chart redraws to ensure trendlines appear
+            // Force chart redraw to ensure trendlines appear
             WindowRedraw();
             ChartRedraw();
-            
-            // Print debug info
-            Print("New trendlines created on mode switch: Upper=", tl_upper.name, " Lower=", tl_lower.name);
         }
         
         // Update button appearance
@@ -652,10 +641,8 @@ void ProcessButtonClicks() {
         // Show appropriate message
         if(edit_mode) {
             Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
-        } else if(trendlines_modified) {
-            Comment("\n\n\nTRADING MODE: EA will now execute trades based on trendlines");
         } else {
-            Comment("\n\n\nTRADING MODE: Waiting for trendlines to be manually adjusted before trading");
+            Comment("\n\n\nTRADING MODE: EA will now execute trades based on trendlines");
         }
     }
 }
@@ -685,8 +672,7 @@ void createLines(double gap_pt) {
     // Draw the lower trendline
     tl_lower.Draw(0, lower_level, TimeCurrent());
     
-    // Reset the modification flag when creating new lines
-    trendlines_modified = false;
+    // Reset the trendline times
     last_upper_tl_time = 0;
     last_lower_tl_time = 0;
 }
