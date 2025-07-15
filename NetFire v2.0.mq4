@@ -212,13 +212,7 @@ void OnTick() {
    
     LossAccumulator();
    
-    TrailMonitor(); // trailing module
-   
-    // Only check if trendlines are marked as dead (used)
-    if(upper_tl_dead && lower_tl_dead) {
-        Comment("\n\n\nTrendlines are marked as used. Please create new trendlines for trading.");
-        return;
-    }
+    TrailMonitor(); // trailing module   
    
     PingPong(); // state > 0
    
@@ -336,7 +330,7 @@ void OpenSell() {
    
     if(result > 0)
     {
-        Print("SELL order executed successfully, ticket #", result, ", marking trendlines as dead");
+        Print("SELL order executed successfully, ticket #", result);
         recent_tk = result;
         fix_lower = Bid;
        // Order opened successfully
@@ -382,7 +376,7 @@ void OpenBuy() {
    
     if(result > 0)
     {
-        Print("BUY order executed successfully, ticket #", result, ", marking trendlines as dead");
+        Print("BUY order executed successfully, ticket #", result);
         recent_tk = result;
         fix_upper = Ask;
        // Order opened successfully
@@ -516,10 +510,6 @@ void string_to_array_double(string someString, double &someArray[]) {
 Trendline tl_upper;
 Trendline tl_lower;
 
-// Variables to track if trendlines are "dead" (already used for trading)
-bool upper_tl_dead = false;
-bool lower_tl_dead = false;
-
 bool IsOrderClosed(int ticket_number) {
     bool is_closed = false;
     if(OrderSelect(ticket_number, SELECT_BY_TICKET))
@@ -614,18 +604,13 @@ void ProcessButtonClicks() {
         ObjectSet(edit_button_name, OBJPROP_STATE, false);
         
         if(!edit_mode) {
-            // When switching from edit mode to trading mode, reset the trendline dead flags
-            upper_tl_dead = false;
-            lower_tl_dead = false;
+            // Switching to trading mode
+            Comment("\n\n\nTRADING MODE: EA will now execute trades based on trendlines");
         } else {
             // When switching to edit mode, always create new trendlines
             // Delete existing trendlines
             ObjectDelete(tl_upper.name);
             ObjectDelete(tl_lower.name);
-            
-            // Reset dead flags
-            upper_tl_dead = false;
-            lower_tl_dead = false;
             
             // Create new trendlines with a wider gap for better visibility
             createLines(initial_gap * Point);
@@ -633,17 +618,12 @@ void ProcessButtonClicks() {
             // Force chart redraw to ensure trendlines appear
             WindowRedraw();
             ChartRedraw();
+            
+            Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
         }
         
         // Update button appearance
         updateEditButton();
-        
-        // Show appropriate message
-        if(edit_mode) {
-            Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
-        } else {
-            Comment("\n\n\nTRADING MODE: EA will now execute trades based on trendlines");
-        }
     }
 }
 
