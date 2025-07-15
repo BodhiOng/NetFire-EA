@@ -129,24 +129,20 @@ int OnInit() {
     bep_in_place = false;
     monitor_bep_level = false;
     bep_level = 0;
-
-    last_upper_tl_time = 0;
-    last_lower_tl_time = 0;
     
-    // Set initial edit mode from input parameter or restore from previous timeframe
-    if(UninitializeReason() == REASON_CHARTCHANGE) {
-        // Restore previous mode when changing timeframes
-        edit_mode = last_mode_was_edit;
-    } else {
-        // Use input parameter for initial start
-        edit_mode = start_in_edit_mode;
-    }
-    
-    // Create edit mode button
+    // Create the edit mode button
     createEditButton();
-   
-    // Enable keyboard events for the chart
-    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true); // Enable chart events
+    
+    // Set edit mode based on input parameter
+    edit_mode = start_in_edit_mode;
+    
+    // Update button to reflect current mode
+    updateEditButton();
+    
+    // Remember the current mode for timeframe changes
+    last_mode_was_edit = edit_mode;
+    
+    // Enable keyboard control for chart
     ChartSetInteger(0, CHART_KEYBOARD_CONTROL, true); // Specifically enable keyboard control
    
     tl_mode_active = tl_mode;
@@ -159,36 +155,34 @@ void OnDeinit(const int reason) {
     // Only delete objects when the EA is being removed, not when switching timeframes
     // Timeframe change is reason code 3 (REASON_CHARTCHANGE)
     if(reason != REASON_CHARTCHANGE) {
-        ObjectDelete("Upper Trendline");
-        ObjectDelete("Lower Trendline");
+        // Delete trendlines
+        ObjectDelete(tl_upper.name);
+        ObjectDelete(tl_lower.name);
+        
+        // Delete edit mode button
         ObjectDelete(edit_button_name);
-        // Objects deleted when EA is removed
+        
+        // Delete horizontal lines
+        ObjectDelete("buy_level");
+        ObjectDelete("sell_level");
     } else {
-        // Save current mode before timeframe change
+        // If we're just changing timeframes, remember the current mode
         last_mode_was_edit = edit_mode;
-        // Mode preserved when changing timeframes
     }
 }
 
-// Chart event handler function
-void OnChartEvent(const int id, const long& lparam, const double& dparam, const string& sparam) {
-    // Check if chart was resized
+// Function to handle chart resize events
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
+    // Check if this is a chart resize event
     if(id == CHARTEVENT_CHART_CHANGE) {
-        // Update button position
-        updateButtonPosition();
-    }
-}
-
-
-// Function to update button position based on current chart size
-void updateButtonPosition() {
-    // Get current chart dimensions
-    int chart_width = ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
-    int chart_height = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+        // Get new chart dimensions
+        int chart_width = ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+        int chart_height = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
     
-    // Update button position to stay at bottom left
-    ObjectSet(edit_button_name, OBJPROP_XDISTANCE, 10);
-    ObjectSet(edit_button_name, OBJPROP_YDISTANCE, chart_height - 40); // 40px from bottom
+        // Update button position to stay at bottom left
+        ObjectSet(edit_button_name, OBJPROP_XDISTANCE, 10);
+        ObjectSet(edit_button_name, OBJPROP_YDISTANCE, chart_height - 40); // 40px from bottom
+    }
 }
 
 // Expert tick function
@@ -209,24 +203,34 @@ void OnTick() {
         Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
         return;
     }
-   
-    LossAccumulator();
-   
-    TrailMonitor(); // trailing module   
-   
-    PingPong(); // state > 0
-   
-    if(tl_mode_active == MODE_TL_LIMIT) {
-        CycleStarterLimit(); // state - > 0
-    } else if (tl_mode_active == MODE_TL_STOP) {
-        CycleStarterStop();
-    } else if (tl_mode_active == MODE_TL_MID) {
-        CycleStarterMiddle();
+    
+    Comment("\n\n\nTRADING MODE: EA will execute trades based on trendlines");
+    
+    // Check if we have trendlines
+    if(ObjectFind(tl_upper.name) < 0 || ObjectFind(tl_lower.name) < 0) {
+        Comment("\n\n\nTrendlines not found. Please create trendlines for trading.");
+        return;
     }
-}
-
-void LossAccumulator() {
-    if(recent_tk > 0 && last_tk_recorded != recent_tk) {
+    
+    // Get trendline prices
+    double upper_price = ObjectGet(tl_upper.name, OBJPROP_PRICE1);
+    double lower_price = ObjectGet(tl_lower.name, OBJPROP_PRICE1);
+    
+    // Check if price touches trendlines
+    if(state == 0 && Bid >= upper_price) {
+        OpenSell();
+    } else if(state == 0 && Ask <= lower_price) {
+        OpenBuy();
+    }
+    
+    // Monitor for ping-pong trades
+    PingPong();
+    
+    // Monitor for trailing stop
+    TrailMonitor();
+    
+    // Check if recent order is closed
+    if(recent_tk > 0) {
         if(IsOrderClosed(recent_tk)) {
             double pnl = GetOrderProfit(recent_tk);
             if(pnl > 0) {
@@ -248,33 +252,28 @@ void TrailMonitor() {
             bep_level = 0;
         }
       
-        if(monitor_bep_level && GetOrderType(recent_tk) == OP_BUY && bep_in_place == false) {
-            if(Bid >= bep_level + bep_trigger_pips * Point) {
-                if(OrderSelect(recent_tk, SELECT_BY_TICKET)) {
-               
-                    bool result = OrderModify(OrderTicket(), OrderOpenPrice(), bep_level, OrderTakeProfit(), 0, clrGreen);
-               
-                    if(result) {
-                        bep_in_place = true;
+        if(state >= 4 && !bep_in_place && !monitor_bep_level) {
+            if(GetOrderType(recent_tk) == OP_BUY) {
+                if(Bid - Ask >= bep_trigger_pips * Point) {
+                    bep_in_place = true;
+                    double sl = Ask;
+                    if(ModifyOrder(recent_tk, 0, sl, 0)) {
+                        Print("Break-even SL set for order #", recent_tk);
+                    }
+                }
+            } else {
+                if(Ask - Bid >= bep_trigger_pips * Point) {
+                    bep_in_place = true;
+                    double sl = Bid;
+                    if(ModifyOrder(recent_tk, 0, sl, 0)) {
+                        Print("Break-even SL set for order #", recent_tk);
                     }
                 }
             }
         }
-      
-        if(monitor_bep_level && GetOrderType(recent_tk) == OP_SELL && bep_in_place == false) {
-            if(Ask <= bep_level - bep_trigger_pips * Point) {
-                if(OrderSelect(recent_tk, SELECT_BY_TICKET)) {
-               
-                    bool result = OrderModify(OrderTicket(), OrderOpenPrice(), bep_level, OrderTakeProfit(), 0, clrGreen);
-               
-                    if(result) {
-                        bep_in_place = true;
-                    }
-                }
-            }
-        }
-   
-        if(monitor_bep_level == false && GetOrderProfit(recent_tk) > acc_loss) {
+        
+        if(bep_in_place && IsOrderClosed(recent_tk)) {
+            bep_in_place = false;
             monitor_bep_level = true;
             if(GetOrderType(recent_tk) == OP_BUY) {
                 bep_level = Bid;
@@ -292,23 +291,25 @@ void PingPong() {
             if(CountOrders(OP_BUY) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
                 double stoploss = Ask - sl_pips * Point;
                 double takeprofit = Ask + tp[state] * Point;
-         
+               
                 int result = OrderSend(Symbol(), OP_BUY, lot[state], Ask, 3, stoploss, takeprofit, "Buy order", magic, 0, clrGreen);
-            
+               
                 if(result > 0)
                 {
                     recent_tk = result;
                     state++;
                 }
+         
             }
-        } else if (fix_lower > 0 && Bid < fix_lower) {
-      
+        }
+        
+        if(fix_lower > 0 && Bid < fix_lower) {
+         
             if(CountOrders(OP_SELL) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
-      
                 double stoploss = Bid + sl_pips * Point;
                 double takeprofit = Bid - tp[state] * Point;
-            
-                int result = OrderSend(Symbol(), OP_SELL, lot[state], Ask, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
+               
+                int result = OrderSend(Symbol(), OP_SELL, lot[state], Bid, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
                
                 if(result > 0)
                 {
@@ -333,23 +334,13 @@ void OpenSell() {
         Print("SELL order executed successfully, ticket #", result);
         recent_tk = result;
         fix_lower = Bid;
-       // Order opened successfully
-        state = 1;
-        // Mark trendlines as dead instead of deleting them
-        upper_tl_dead = true;
-        lower_tl_dead = true;
-        
-        // Change trendline color to indicate they're dead (gray)
-        if(ObjectFind(tl_upper.name) >= 0) ObjectSet(tl_upper.name, OBJPROP_COLOR, clrDarkGray);
-        if(ObjectFind(tl_lower.name) >= 0) ObjectSet(tl_lower.name, OBJPROP_COLOR, clrDarkGray);
-        
-        Print("Trendlines marked as dead: upper=", upper_tl_dead, " lower=", lower_tl_dead);
+        state = 1; // Order opened successfully
        
         double price = Bid;
         string name = "sell_level";
         double offset = sl_pips * 2;
        
-       // create replacement Hline
+        // create replacement Hline
         ObjectCreate(name, OBJ_HLINE, 0, 0, 0);
         ObjectSet(name, OBJPROP_PRICE, price);
        
@@ -360,10 +351,6 @@ void OpenSell() {
        
         ObjectCreate(opposite_name, OBJ_HLINE, 0, 0, 0);
         ObjectSet(opposite_name, OBJPROP_PRICE, opposite_price);
-    }
-    else
-    {
-       // Order failed to open
     }
 }
 
@@ -379,23 +366,13 @@ void OpenBuy() {
         Print("BUY order executed successfully, ticket #", result);
         recent_tk = result;
         fix_upper = Ask;
-       // Order opened successfully
-        state = 1;
-        // Mark trendlines as dead instead of deleting them
-        upper_tl_dead = true;
-        lower_tl_dead = true;
-        
-        // Change trendline color to indicate they're dead (gray)
-        if(ObjectFind(tl_upper.name) >= 0) ObjectSet(tl_upper.name, OBJPROP_COLOR, clrDarkGray);
-        if(ObjectFind(tl_lower.name) >= 0) ObjectSet(tl_lower.name, OBJPROP_COLOR, clrDarkGray);
-        
-        Print("Trendlines marked as dead: upper=", upper_tl_dead, " lower=", lower_tl_dead);
+        state = 1; // Order opened successfully
        
         double price = Ask;
         string name = "buy_level";
         double offset = - sl_pips * 2;
        
-       // create replacement Hline
+        // create replacement Hline
         ObjectCreate(name, OBJ_HLINE, 0, 0, 0);
         ObjectSet(name, OBJPROP_PRICE, price);
        
@@ -407,128 +384,34 @@ void OpenBuy() {
         ObjectCreate(opposite_name, OBJ_HLINE, 0, 0, 0);
         ObjectSet(opposite_name, OBJPROP_PRICE, opposite_price);
     }
-    else
-    {
-        // Order failed to open
-    }
 }
-
-void CycleStarterLimit() {
-    if(state == 0) {
-        double tl_upper_price = ObjectGetValueByShift(tl_upper.name, 0);
-        if(Bid > tl_upper_price)
-        {
-            OpenSell();
-            return;
-        } // upper TL
-      
-        double tl_lower_price = ObjectGetValueByShift(tl_lower.name, 0);
-        if(Ask < tl_lower_price)
-        {
-            OpenBuy();
-        }
-    } // if state == 0
-}
-
-void CycleStarterStop() {
-    if(state == 0) {
-        double tl_upper_price = ObjectGetValueByShift(tl_upper.name, 0);
-        if(Ask > tl_upper_price)
-        {
-            OpenBuy();
-            return;
-        } // upper TL
-      
-        double tl_lower_price = ObjectGetValueByShift(tl_lower.name, 0);
-        if(Bid < tl_lower_price)
-        {
-            OpenSell();
-        }
-    } // if state == 0
-}
-
-void CycleStarterMiddle() {
-    if(state == 0) {
-        double tl_upper_price = ObjectGetValueByShift(tl_upper.name, 0);
-        if(Ask > tl_upper_price)
-        {
-            createLines(mid_gap * Point);
-            tl_mode_active = MODE_TL_STOP;
-            return;
-        } // upper TL
-      
-        double tl_lower_price = ObjectGetValueByShift(tl_lower.name, 0);
-        if(Bid < tl_lower_price)
-        {
-            createLines(mid_gap * Point);
-            tl_mode_active = MODE_TL_STOP;
-            return;
-        }
-    } // if state == 0
-}
-
-#property strict
-
-int item_count(string someString) {
-    string stringCopy = someString;
-    int counter = 0; // count number of commas
-    while( StringFind(stringCopy, ", ", 0) >= 0 )
-    {
-        counter++;
-        int commaIndex = StringFind(stringCopy, ", ", 0);
-        int len = StringLen(stringCopy);
-        stringCopy = StringSubstr(stringCopy, commaIndex + 1, len - (commaIndex + 1));
-    }
-   
-    return(counter + 1);
-}
-
-void string_to_array_double(string someString, double &someArray[]) {
-    int arraySize = item_count(someString);
-   
-    ArrayResize(someArray, arraySize); // RESIZE ARRAY TO FIT N MEMBERS
-   
-    int counter = arraySize - 1;
-   
-   // EXTRACT STRING INTO ARRAY
-    for( int i = 0; i < counter; i++ ) // 1 - 3
-    {
-        int commaIndex = StringFind(someString, ", ", 0);
-      
-        someArray[i] = StrToDouble(StringSubstr(someString, 0, commaIndex));
-      
-        int len = StringLen(someString);
-      
-        someString = StringSubstr(someString, commaIndex + 1, len - (commaIndex + 1));
-    }
-   
-   // LAST MEMBER OF THE ARRAY -> THE REMAINDER OF STRING
-    someArray[counter] = StrToDouble(someString);
-}
-
-// Declare global variables for the two trendline objects
-Trendline tl_upper;
-Trendline tl_lower;
 
 bool IsOrderClosed(int ticket_number) {
-    bool is_closed = false;
-    if(OrderSelect(ticket_number, SELECT_BY_TICKET))
-    {
-        is_closed = OrderCloseTime() > 0;
+    if(OrderSelect(ticket_number, SELECT_BY_TICKET)) {
+        if(OrderCloseTime() > 0) {
+            return true;
+        }
     }
-    return is_closed;
+    return false;
 }
 
 double GetOrderProfit(int ticket_number) {
     double profit = 0;
-    if(OrderSelect(ticket_number, SELECT_BY_TICKET))
-    {
-        profit = OrderProfit();
+    if(OrderSelect(ticket_number, SELECT_BY_TICKET)) {
+        profit = OrderProfit() + OrderCommission() + OrderSwap();
     }
     return profit;
 }
 
-double GetOrderType(int ticket_number) {
+bool ModifyOrder(int ticket_number, double price, double sl, double tp) {
+    bool result = false;
+    if(OrderSelect(ticket_number, SELECT_BY_TICKET)) {
+        result = OrderModify(ticket_number, price, sl, tp, 0, clrGreen);
+    }
+    return result;
+}
+
+int GetOrderType(int ticket_number) {
     int type = OP_BUY;
     if(OrderSelect(ticket_number, SELECT_BY_TICKET)) {
         type = OrderType();
@@ -656,3 +539,47 @@ void createLines(double gap_pt) {
     last_upper_tl_time = 0;
     last_lower_tl_time = 0;
 }
+
+// Function to convert a comma-separated string to an array of doubles
+void string_to_array_double(string input_string, double &output_array[]) {
+    // Remove spaces from the input string
+    string clean_string = StringTrimRight(StringTrimLeft(input_string));
+    
+    // Count the number of commas to determine array size
+    int comma_count = 0;
+    for(int i = 0; i < StringLen(clean_string); i++) {
+        if(StringGetCharacter(clean_string, i) == ',') {
+            comma_count++;
+        }
+    }
+    
+    // Resize the output array
+    ArrayResize(output_array, comma_count + 1);
+    
+    // Parse the string and fill the array
+    string current_value = "";
+    int array_index = 0;
+    
+    for(int i = 0; i < StringLen(clean_string); i++) {
+        int char_code = StringGetCharacter(clean_string, i);
+        
+        if(char_code == ',') {
+            // Convert the current value to double and add to array
+            output_array[array_index] = StringToDouble(current_value);
+            array_index++;
+            current_value = "";
+        } else {
+            // Add character to current value
+            current_value = current_value + StringSubstr(clean_string, i, 1);
+        }
+    }
+    
+    // Add the last value
+    if(StringLen(current_value) > 0) {
+        output_array[array_index] = StringToDouble(current_value);
+    }
+}
+
+// Trendline objects
+Trendline tl_upper;
+Trendline tl_lower;
