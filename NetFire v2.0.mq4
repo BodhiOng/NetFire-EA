@@ -42,6 +42,7 @@ bool cycle_done;
 bool bep_in_place;
 bool monitor_bep_level;
 double bep_level;
+int orders_made_counter = 0; // Counter for orders made during trading mode
 
 // Edit mode variables
 bool edit_mode = true; // Start in edit mode by default
@@ -190,17 +191,13 @@ void OnTick() {
     // Always process button clicks, even when cycle is done
     ProcessButtonClicks();
     
-    if(cycle_done && !edit_mode) {
-        Comment("\n\n\nCycle is done, last order is in profit. Click EDIT MODE button to reset and start a new cycle.");
-        return;
-    }
-       
     // If in edit mode, don't execute trades
     if(edit_mode) {
         Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
         return;
     }
     
+    // Get the trading mode text
     string modeText = "";
     switch(tl_mode_active) {
         case MODE_TL_LIMIT: modeText = "LIMIT"; break;
@@ -208,7 +205,17 @@ void OnTick() {
         case MODE_TL_MID: modeText = "MID"; break;
     }
     
-    Comment("\n\n\nTRADING MODE: " + modeText + " - EA will execute trades based on trendlines");
+    // Display orders made counter and trading mode info
+    if(cycle_done) {
+        Comment("\n\n\nCycle is done, last order is in profit.\n\nClick EDIT MODE button to reset and start a new cycle.\n\nTrading Mode: " + modeText + ", Orders made: " + IntegerToString(orders_made_counter));
+    } else {
+        Comment("\n\n\nTRADING MODE: " + modeText + "\n\nEA will execute trades based on trendlines.\n\nOrders made: " + IntegerToString(orders_made_counter));
+    }
+
+    if(orders_made_counter >= max_attempts) {
+        Comment("\n\n\nMaximum number of order attempts had been reached. \n\nClick EDIT MODE button to reset and start a new cycle. \n\nOrders made: " + IntegerToString(orders_made_counter));
+        return;
+    }
     
     // Check if we have trendlines
     if(ObjectFind(tl_upper.name) < 0 || ObjectFind(tl_lower.name) < 0) {
@@ -277,7 +284,7 @@ void OnTick() {
                 break;
                 
             case MODE_TL_MID:
-            {
+            {                   
                 // MID mode: Calculate mid price and place orders on both sides
                 double mid_price = (upper_price + lower_price) / 2;
                 
@@ -380,6 +387,7 @@ void PingPong() {
                         if(result > 0) {
                             recent_tk = result;
                             state++;
+                            orders_made_counter++; // Increment orders counter
                         }
                     }
                 }
@@ -398,6 +406,7 @@ void PingPong() {
                         if(result > 0) {
                             recent_tk = result;
                             state++;
+                            orders_made_counter++; // Increment orders counter
                         }
                     }
                 }
@@ -420,6 +429,7 @@ void PingPong() {
                         if(result > 0) {
                             recent_tk = result;
                             state++;
+                            orders_made_counter++; // Increment orders counter
                         }
                     }
                 }
@@ -438,6 +448,7 @@ void PingPong() {
                         if(result > 0) {
                             recent_tk = result;
                             state++;
+                            orders_made_counter++; // Increment orders counter
                         }
                     }
                 }
@@ -463,6 +474,7 @@ void PingPong() {
                         if(result > 0) {
                             recent_tk = result;
                             state++;
+                            orders_made_counter++; // Increment orders counter
                         }
                     }
                 }
@@ -482,6 +494,7 @@ void PingPong() {
                         if(result > 0) {
                             recent_tk = result;
                             state++;
+                            orders_made_counter++; // Increment orders counter
                         }
                     }
                 }
@@ -505,6 +518,7 @@ void OpenSell() {
         Print("SELL order executed successfully, ticket #", result);
         recent_tk = result;
         state = 1; // Order opened successfully
+        orders_made_counter++; // Increment orders made counter
         
         double price = Bid;
         string name = "sell_level";
@@ -564,6 +578,7 @@ void OpenBuy() {
         Print("BUY order executed successfully, ticket #", result);
         recent_tk = result;
         state = 1; // Order opened successfully
+        orders_made_counter++; // Increment orders made counter
         
         double price = Ask;
         string name = "buy_level";
@@ -707,6 +722,7 @@ void ProcessButtonClicks() {
         
         if(!edit_mode) {
             // Switching to trading mode
+            orders_made_counter = 0; // Reset orders counter when entering trading mode
             Comment("\n\n\nTRADING MODE: EA will now execute trades based on trendlines");
         } else {
             // When switching to edit mode, always create new trendlines
