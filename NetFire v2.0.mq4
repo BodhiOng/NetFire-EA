@@ -58,7 +58,7 @@ static bool last_mode_was_edit = true;
 
 MODE_TL tl_mode_active;
 
-struct Trendline {
+struct Trendline {  
     string name;
     color clr;
     int style;
@@ -187,24 +187,28 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 
 // Expert tick function
 void OnTick() {
-   //---
-    if(cycle_done) {
-        Comment("\n\n\nCycle is done, last order is in profit");
+    // Always process button clicks, even when cycle is done
+    ProcessButtonClicks();
+    
+    if(cycle_done && !edit_mode) {
+        Comment("\n\n\nCycle is done, last order is in profit. Click EDIT MODE button to reset and start a new cycle.");
         return;
     }
-    
-    // Process button clicks
-    ProcessButtonClicks();
-   
-
-    
+       
     // If in edit mode, don't execute trades
     if(edit_mode) {
         Comment("\n\n\nEDIT MODE: Adjust trendlines as needed, then click button to start trading");
         return;
     }
     
-    Comment("\n\n\nTRADING MODE: EA will execute trades based on trendlines");
+    string modeText = "";
+    switch(tl_mode_active) {
+        case MODE_TL_LIMIT: modeText = "LIMIT"; break;
+        case MODE_TL_STOP: modeText = "STOP"; break;
+        case MODE_TL_MID: modeText = "MID"; break;
+    }
+    
+    Comment("\n\n\nTRADING MODE: " + modeText + " - EA will execute trades based on trendlines");
     
     // Check if we have trendlines
     if(ObjectFind(tl_upper.name) < 0 || ObjectFind(tl_lower.name) < 0) {
@@ -212,15 +216,88 @@ void OnTick() {
         return;
     }
     
-    // Get trendline prices
-    double upper_price = ObjectGet(tl_upper.name, OBJPROP_PRICE1);
-    double lower_price = ObjectGet(tl_lower.name, OBJPROP_PRICE1);
+    // Get trendline prices at current bar position (accounts for diagonal trendlines)
+    // Get the coordinates of the trendline points
+    datetime time1_upper = (datetime)ObjectGet(tl_upper.name, OBJPROP_TIME1);
+    double price1_upper = ObjectGet(tl_upper.name, OBJPROP_PRICE1);
+    datetime time2_upper = (datetime)ObjectGet(tl_upper.name, OBJPROP_TIME2);
+    double price2_upper = ObjectGet(tl_upper.name, OBJPROP_PRICE2);
     
-    // Check if price touches trendlines
-    if(state == 0 && Bid >= upper_price) {
-        OpenSell();
-    } else if(state == 0 && Ask <= lower_price) {
-        OpenBuy();
+    datetime time1_lower = (datetime)ObjectGet(tl_lower.name, OBJPROP_TIME1);
+    double price1_lower = ObjectGet(tl_lower.name, OBJPROP_PRICE1);
+    datetime time2_lower = (datetime)ObjectGet(tl_lower.name, OBJPROP_TIME2);
+    double price2_lower = ObjectGet(tl_lower.name, OBJPROP_PRICE2);
+    
+    // Calculate the current price on each trendline
+    double upper_price, lower_price;
+    
+    // If the trendline is horizontal, just use the price
+    if(price1_upper == price2_upper) {
+        upper_price = price1_upper;
+    } else {
+        // Calculate the slope and intercept for the upper trendline
+        double slope_upper = (price2_upper - price1_upper) / (time2_upper - time1_upper);
+        double intercept_upper = price1_upper - slope_upper * time1_upper;
+        
+        // Calculate the current price on the upper trendline
+        upper_price = slope_upper * TimeCurrent() + intercept_upper;
+    }
+    
+    // If the trendline is horizontal, just use the price
+    if(price1_lower == price2_lower) {
+        lower_price = price1_lower;
+    } else {
+        // Calculate the slope and intercept for the lower trendline
+        double slope_lower = (price2_lower - price1_lower) / (time2_lower - time1_lower);
+        double intercept_lower = price1_lower - slope_lower * time1_lower;
+        
+        // Calculate the current price on the lower trendline
+        lower_price = slope_lower * TimeCurrent() + intercept_lower;
+    }
+        
+    // Trading logic based on active mode
+    if(state == 0) {
+        switch(tl_mode_active) {
+            case MODE_TL_LIMIT:
+                // LIMIT mode: Buy when price touches lower line from above, Sell when price touches upper line from below
+                if(Bid >= upper_price) {
+                    OpenSell();
+                } else if(Ask <= lower_price) {
+                    OpenBuy();
+                }
+                break;
+                
+            case MODE_TL_STOP:
+                // STOP mode: Buy when price breaks above upper line, Sell when price breaks below lower line
+                if(Ask >= upper_price) {
+                    OpenBuy();
+                } else if(Bid <= lower_price) {
+                    OpenSell();
+                }
+                break;
+                
+            case MODE_TL_MID:
+            {
+                // MID mode: Calculate mid price and place orders on both sides
+                double mid_price = (upper_price + lower_price) / 2;
+                
+                // Only open orders if we don't have any active orders
+                if(CountOrders(OP_BUY) == 0 && CountOrders(OP_SELL) == 0) {
+                    // Buy at mid_price + mid_gap
+                    double buy_price = mid_price + mid_gap * Point;
+                    if(Ask >= buy_price) {
+                        OpenBuy();
+                    }
+                    
+                    // Sell at mid_price - mid_gap
+                    double sell_price = mid_price - mid_gap * Point;
+                    if(Bid <= sell_price) {
+                        OpenSell();
+                    }
+                }
+                break;
+            }
+        }
     }
     
     // Monitor for ping-pong trades
@@ -286,103 +363,247 @@ void TrailMonitor() {
 
 void PingPong() {
     if(state > 0 && state < max_attempts) {
-        if(fix_upper > 0 && Ask > fix_upper) {
-         
-            if(CountOrders(OP_BUY) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
-                double stoploss = Ask - sl_pips * Point;
-                double takeprofit = Ask + tp[state] * Point;
-               
-                int result = OrderSend(Symbol(), OP_BUY, lot[state], Ask, 3, stoploss, takeprofit, "Buy order", magic, 0, clrGreen);
-               
-                if(result > 0)
-                {
-                    recent_tk = result;
-                    state++;
+        switch(tl_mode_active) {
+            case MODE_TL_LIMIT:
+                // LIMIT mode: Buy when price crosses above fix_upper, Sell when price crosses below fix_lower
+                if(fix_upper > 0 && Ask > fix_upper) {
+                    if(CountOrders(OP_BUY) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
+                        // Get broker's minimum stop level
+                        int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+                        
+                        // Calculate stop loss and take profit with respect to minimum stop level
+                        double stoploss = Ask - MathMax(sl_pips, min_stop_level + 5) * Point;
+                        double takeprofit = Ask + MathMax(tp[state], min_stop_level + 5) * Point;
+                       
+                        int result = OrderSend(Symbol(), OP_BUY, lot[state], Ask, 3, stoploss, takeprofit, "Buy order", magic, 0, clrGreen);
+                       
+                        if(result > 0) {
+                            recent_tk = result;
+                            state++;
+                        }
+                    }
                 }
-         
-            }
-        }
-        
-        if(fix_lower > 0 && Bid < fix_lower) {
-         
-            if(CountOrders(OP_SELL) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
-                double stoploss = Bid + sl_pips * Point;
-                double takeprofit = Bid - tp[state] * Point;
-               
-                int result = OrderSend(Symbol(), OP_SELL, lot[state], Bid, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
-               
-                if(result > 0)
-                {
-                    recent_tk = result;
-                    state++;
+                
+                if(fix_lower > 0 && Bid < fix_lower) {
+                    if(CountOrders(OP_SELL) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
+                        // Get broker's minimum stop level
+                        int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+                        
+                        // Calculate stop loss and take profit with respect to minimum stop level
+                        double stoploss = Bid + MathMax(sl_pips, min_stop_level + 5) * Point;
+                        double takeprofit = Bid - MathMax(tp[state], min_stop_level + 5) * Point;
+                       
+                        int result = OrderSend(Symbol(), OP_SELL, lot[state], Bid, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
+                       
+                        if(result > 0) {
+                            recent_tk = result;
+                            state++;
+                        }
+                    }
                 }
-         
+                break;
+                
+            case MODE_TL_STOP:
+                // STOP mode: Buy when price crosses above fix_upper, Sell when price crosses below fix_lower
+                // In STOP mode, the fix levels are reversed compared to LIMIT mode
+                if(fix_lower > 0 && Ask > fix_lower) {
+                    if(CountOrders(OP_BUY) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
+                        // Get broker's minimum stop level
+                        int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+                        
+                        // Calculate stop loss and take profit with respect to minimum stop level
+                        double stoploss = Ask - MathMax(sl_pips, min_stop_level + 5) * Point;
+                        double takeprofit = Ask + MathMax(tp[state], min_stop_level + 5) * Point;
+                       
+                        int result = OrderSend(Symbol(), OP_BUY, lot[state], Ask, 3, stoploss, takeprofit, "Buy order", magic, 0, clrGreen);
+                       
+                        if(result > 0) {
+                            recent_tk = result;
+                            state++;
+                        }
+                    }
+                }
+                
+                if(fix_upper > 0 && Bid < fix_upper) {
+                    if(CountOrders(OP_SELL) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
+                        // Get broker's minimum stop level
+                        int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+                        
+                        // Calculate stop loss and take profit with respect to minimum stop level
+                        double stoploss = Bid + MathMax(sl_pips, min_stop_level + 5) * Point;
+                        double takeprofit = Bid - MathMax(tp[state], min_stop_level + 5) * Point;
+                       
+                        int result = OrderSend(Symbol(), OP_SELL, lot[state], Bid, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
+                       
+                        if(result > 0) {
+                            recent_tk = result;
+                            state++;
+                        }
+                    }
+                }
+                break;
+                
+            case MODE_TL_MID:
+            {
+                // MID mode: Buy and Sell orders are placed based on mid price
+                double mid_price = (fix_upper + fix_lower) / 2;
+                
+                // Buy when price crosses above mid_price + mid_gap
+                if(fix_upper > 0 && fix_lower > 0 && Ask > (mid_price + mid_gap * Point)) {
+                    if(CountOrders(OP_BUY) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
+                        // Get broker's minimum stop level
+                        int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+                        
+                        // Calculate stop loss and take profit with respect to minimum stop level
+                        double stoploss = Ask - MathMax(sl_pips, min_stop_level + 5) * Point;
+                        double takeprofit = Ask + MathMax(tp[state], min_stop_level + 5) * Point;
+                       
+                        int result = OrderSend(Symbol(), OP_BUY, lot[state], Ask, 3, stoploss, takeprofit, "Buy order", magic, 0, clrGreen);
+                       
+                        if(result > 0) {
+                            recent_tk = result;
+                            state++;
+                        }
+                    }
+                }
+                
+                // Sell when price crosses below mid_price - mid_gap
+                if(fix_upper > 0 && fix_lower > 0 && Bid < (mid_price - mid_gap * Point)) {
+                    if(CountOrders(OP_SELL) == 0 && recent_tk > 0 && GetOrderProfit(recent_tk) < 0 && IsOrderClosed(recent_tk)) {
+                        // Get broker's minimum stop level
+                        int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+                        
+                        // Calculate stop loss and take profit with respect to minimum stop level
+                        double stoploss = Bid + MathMax(sl_pips, min_stop_level + 5) * Point;
+                        double takeprofit = Bid - MathMax(tp[state], min_stop_level + 5) * Point;
+                       
+                        int result = OrderSend(Symbol(), OP_SELL, lot[state], Bid, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
+                       
+                        if(result > 0) {
+                            recent_tk = result;
+                            state++;
+                        }
+                    }
+                }
+                break;
             }
         }
     }
 }
 
 void OpenSell() {
-   // Bid touches the upper trendline from below
-    double stoploss = Bid + sl_pips * Point;
-    double takeprofit = Bid - tp[state] * Point;
-   
+    // Get broker's minimum stop level in points
+    int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+    
+    // Calculate stop loss and take profit with respect to minimum stop level
+    double stoploss = Bid + MathMax(sl_pips, min_stop_level + 5) * Point;
+    double takeprofit = Bid - MathMax(tp[state], min_stop_level + 5) * Point;
+    
     int result = OrderSend(Symbol(), OP_SELL, lot[state], Bid, 3, stoploss, takeprofit, "Sell order", magic, 0, clrGreen);
-   
-    if(result > 0)
-    {
+        
+    if(result > 0) {
         Print("SELL order executed successfully, ticket #", result);
         recent_tk = result;
-        fix_lower = Bid;
         state = 1; // Order opened successfully
-       
+        
         double price = Bid;
         string name = "sell_level";
-        double offset = sl_pips * 2;
-       
-        // create replacement Hline
+        double offset;
+        
+        // Set fix levels based on mode
+        switch(tl_mode_active) {
+            case MODE_TL_LIMIT:
+                // In LIMIT mode, fix_lower is at the sell price, fix_upper is above
+                fix_lower = price;
+                offset = sl_pips * 2;
+                fix_upper = price + offset * Point;
+                break;
+                
+            case MODE_TL_STOP:
+                // In STOP mode, fix_upper is at the sell price, fix_lower is below
+                fix_upper = price;
+                offset = -sl_pips * 2;
+                fix_lower = price + offset * Point;
+                break;
+                
+            case MODE_TL_MID:
+            {
+                // In MID mode, calculate mid price and set levels with gap
+                double mid_price = price;
+                fix_lower = mid_price - mid_gap * Point;
+                fix_upper = mid_price + mid_gap * Point;
+                break;
+            }
+        }
+        
+        // Create horizontal lines to visualize levels
         ObjectCreate(name, OBJ_HLINE, 0, 0, 0);
         ObjectSet(name, OBJPROP_PRICE, price);
-       
+        
         string opposite_name = "buy_level";
-        double opposite_price = price + offset * Point;
-       
-        fix_upper = opposite_price;
-       
         ObjectCreate(opposite_name, OBJ_HLINE, 0, 0, 0);
-        ObjectSet(opposite_name, OBJPROP_PRICE, opposite_price);
+        
+        // Set the opposite line based on mode
+        ObjectSet(opposite_name, OBJPROP_PRICE, fix_upper);
+    } else {
+        Print("Order's not allowed to be made");
     }
 }
 
 void OpenBuy() {
-   // Ask touches the lower trendline from above
-    double stoploss = Ask - sl_pips * Point;
-    double takeprofit = Ask + tp[state] * Point;
-   
+    // Get broker's minimum stop level in points
+    int min_stop_level = MarketInfo(Symbol(), MODE_STOPLEVEL);
+    
+    // Calculate stop loss and take profit with respect to minimum stop level
+    double stoploss = Ask - MathMax(sl_pips, min_stop_level + 5) * Point;
+    double takeprofit = Ask + MathMax(tp[state], min_stop_level + 5) * Point;
+    
     int result = OrderSend(Symbol(), OP_BUY, lot[state], Ask, 3, stoploss, takeprofit, "Buy order", magic, 0, clrGreen);
-   
-    if(result > 0)
-    {
+    
+    if(result > 0) {
         Print("BUY order executed successfully, ticket #", result);
         recent_tk = result;
-        fix_upper = Ask;
         state = 1; // Order opened successfully
-       
+        
         double price = Ask;
         string name = "buy_level";
-        double offset = - sl_pips * 2;
-       
-        // create replacement Hline
+        double offset;
+        
+        // Set fix levels based on mode
+        switch(tl_mode_active) {
+            case MODE_TL_LIMIT:
+                // In LIMIT mode, fix_upper is at the buy price, fix_lower is below
+                fix_upper = price;
+                offset = -sl_pips * 2;
+                fix_lower = price + offset * Point;
+                break;
+                
+            case MODE_TL_STOP:
+                // In STOP mode, fix_lower is at the buy price, fix_upper is above
+                fix_lower = price;
+                offset = sl_pips * 2;
+                fix_upper = price + offset * Point;
+                break;
+                
+            case MODE_TL_MID:
+            {
+                // In MID mode, calculate mid price and set levels with gap
+                double mid_price = price;
+                fix_lower = mid_price - mid_gap * Point;
+                fix_upper = mid_price + mid_gap * Point;
+                break;
+            }
+        }
+        
+        // Create horizontal lines to visualize levels
         ObjectCreate(name, OBJ_HLINE, 0, 0, 0);
         ObjectSet(name, OBJPROP_PRICE, price);
-       
+        
         string opposite_name = "sell_level";
-        double opposite_price = price + offset * Point;
-       
-        fix_lower = opposite_price;
-       
         ObjectCreate(opposite_name, OBJ_HLINE, 0, 0, 0);
-        ObjectSet(opposite_name, OBJPROP_PRICE, opposite_price);
+        
+        // Set the opposite line based on mode
+        ObjectSet(opposite_name, OBJPROP_PRICE, fix_lower);
     }
 }
 
@@ -418,8 +639,6 @@ int GetOrderType(int ticket_number) {
     }
     return type;
 }
-
-
 
 int CountOrders(int operation_type) {
     int count = 0;
@@ -498,6 +717,12 @@ void ProcessButtonClicks() {
             // Create new trendlines with a wider gap for better visibility
             createLines(initial_gap * Point);
             
+            // Reset cycle state
+            cycle_done = false;
+            state = 0;
+            recent_tk = 0;
+            acc_loss = 0;
+            
             // Force chart redraw to ensure trendlines appear
             WindowRedraw();
             ChartRedraw();
@@ -511,9 +736,12 @@ void ProcessButtonClicks() {
 }
 
 void createLines(double gap_pt) {
-    // Calculate the upper and lower price levels for the trendlines
-    double upper_level = Bid + gap_pt;
-    double lower_level = Ask - gap_pt;
+    // Calculate the middle price to avoid issues with spread
+    double mid_price = (Bid + Ask) / 2;
+    
+    // Calculate the upper and lower price levels from the middle price
+    double upper_level = mid_price + gap_pt;
+    double lower_level = mid_price - gap_pt;
 
     // Set the parameters for the upper trendline object
     tl_upper.name = "Upper Trendline";
