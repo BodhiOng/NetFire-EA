@@ -77,29 +77,29 @@ struct Trendline {
         // Dynamically adjust trendline length based on timeframe
         switch(currentTimeframe)
         {
-            case PERIOD_M1: // 1 minute
-            timeExtension = 60 * 5; // 5 minutes
+            case PERIOD_M1: // 1 minute 
+            timeExtension = 60 * 20; // 20 minutes
             break;
             case PERIOD_M5: // 5 minutes
-            timeExtension = 60 * 25; // 25 minutes
+            timeExtension = 60 * 100; // 100 minutes
             break;
             case PERIOD_M15: // 15 minutes
-            timeExtension = 60 * 75; // 75 minutes
+            timeExtension = 60 * 300; // 300 minutes
             break;
             case PERIOD_M30: // 30 minutes
-            timeExtension = 60 * 150; // 150 minutes
+            timeExtension = 60 * 600; // 600 minutes
             break;
             case PERIOD_H1: // 1 hour
-            timeExtension = 3600 * 5; // 5 hours
-            break;
-            case PERIOD_H4: // 4 hours
             timeExtension = 3600 * 20; // 20 hours
             break;
+            case PERIOD_H4: // 4 hours
+            timeExtension = 3600 * 80; // 80 hours
+            break;
             case PERIOD_D1: // 1 day
-            timeExtension = 86400 * 5; // 5 days
+            timeExtension = 86400 * 20; // 20 days
             break;
             default: // For any other timeframe
-            timeExtension = 86400; // 1 day
+            timeExtension = 86400 * 4; // 4 days
             break;
         }
         
@@ -260,40 +260,33 @@ void OnTick() {
         switch(tl_mode_active) {
             case MODE_TL_LIMIT:
                 // LIMIT mode: Buy when price touches lower line from above, Sell when price touches upper line from below
-                if(Bid >= upper_price) {
+                if(Bid > upper_price) {
                     OpenSell();
-                } else if(Ask <= lower_price) {
+                } else if(Ask < lower_price) {
                     OpenBuy();
                 }
                 break;
                 
             case MODE_TL_STOP:
                 // STOP mode: Buy when price breaks above upper line, Sell when price breaks below lower line
-                if(Ask >= upper_price) {
+                if(Ask > upper_price) {
                     OpenBuy();
-                } else if(Bid <= lower_price) {
+                } else if(Bid < lower_price) {
                     OpenSell();
                 }
                 break;
                 
             case MODE_TL_MID:
-            {                   
-                // MID mode: Calculate mid price and place orders on both sides
-                double mid_price = (upper_price + lower_price) / 2;
-                
-                // Only open orders if we don't have any active orders
-                if(CountOrders(OP_BUY) == 0 && CountOrders(OP_SELL) == 0) {
-                    // Buy at mid_price + mid_gap
-                    double buy_price = mid_price + mid_gap * Point;
-                    if(Ask >= buy_price) {
-                        OpenBuy();
-                    }
-                    
-                    // Sell at mid_price - mid_gap
-                    double sell_price = mid_price - mid_gap * Point;
-                    if(Bid <= sell_price) {
-                        OpenSell();
-                    }
+            {
+                // MID mode: Switch to STOP mode after breakout and recreate trendlines with mid_gap
+                if(Ask > upper_price) {
+                    createLines(mid_gap * Point);
+                    tl_mode_active = MODE_TL_STOP;
+                    return;
+                } else if(Bid < lower_price) {
+                    createLines(mid_gap * Point);
+                    tl_mode_active = MODE_TL_STOP;
+                    return;
                 }
                 break;
             }
@@ -748,9 +741,45 @@ void createLines(double gap_pt) {
     // Calculate the middle price to avoid issues with spread
     double mid_price = (Bid + Ask) / 2;
     
+    // Get current chart timeframe and adjust gap based on timeframe
+    int currentTimeframe = Period();
+    double timeframe_gap_multiplier = 1.0;
+    
+    // Dynamically adjust gap based on timeframe
+    switch(currentTimeframe)
+    {
+        case PERIOD_M1: // 1 minute
+            timeframe_gap_multiplier = 4.0;
+            break;
+        case PERIOD_M5: // 5 minutes
+            timeframe_gap_multiplier = 8.0;
+            break;
+        case PERIOD_M15: // 15 minutes
+            timeframe_gap_multiplier = 12.0;
+            break;
+        case PERIOD_M30: // 30 minutes
+            timeframe_gap_multiplier = 16.0;
+            break;
+        case PERIOD_H1: // 1 hour
+            timeframe_gap_multiplier = 24.0;
+            break;
+        case PERIOD_H4: // 4 hours
+            timeframe_gap_multiplier = 32.0;
+            break;
+        case PERIOD_D1: // 1 day
+            timeframe_gap_multiplier = 64.0;
+            break;
+        default: // For any other timeframe
+            timeframe_gap_multiplier = 10.0;
+            break;
+    }
+    
+    // Apply the timeframe multiplier to the gap
+    double adjusted_gap = gap_pt * timeframe_gap_multiplier;
+    
     // Calculate the upper and lower price levels from the middle price
-    double upper_level = mid_price + gap_pt;
-    double lower_level = mid_price - gap_pt;
+    double upper_level = mid_price + adjusted_gap;
+    double lower_level = mid_price - adjusted_gap;
 
     // Set the parameters for the upper trendline object
     tl_upper.name = "Upper Trendline";
