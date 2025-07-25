@@ -51,6 +51,7 @@ datetime last_lower_tl_time = 0;
 static bool last_mode_was_edit = true;
 
 MODE_TL tl_mode_active;
+bool mid_to_stop_switch = false; // Flag to indicate mode switched from MID to STOP
 
 struct Trendline {  
     string name;
@@ -280,10 +281,12 @@ void OnTick() {
             {
                 // MID mode: Switch to STOP mode after breakout and recreate trendlines with mid_gap
                 if(Ask > upper_price) {
+                    mid_to_stop_switch = true; // Set flag to use original gap without multiplier
                     createLines(mid_gap * Point);
                     tl_mode_active = MODE_TL_STOP;
                     return;
                 } else if(Bid < lower_price) {
+                    mid_to_stop_switch = true; // Set flag to use original gap without multiplier
                     createLines(mid_gap * Point);
                     tl_mode_active = MODE_TL_STOP;
                     return;
@@ -774,8 +777,14 @@ void createLines(double gap_pt) {
             break;
     }
     
-    // Apply the timeframe multiplier to the gap
-    double adjusted_gap = gap_pt * timeframe_gap_multiplier;
+    // Apply the timeframe multiplier to the gap (skip if switching from MID to STOP)
+    double adjusted_gap;
+    if(mid_to_stop_switch) {
+        adjusted_gap = gap_pt; // Use original gap without multiplier when switching from MID to STOP
+        mid_to_stop_switch = false; // Reset the flag after use
+    } else {
+        adjusted_gap = gap_pt * timeframe_gap_multiplier;
+    }
     
     // Calculate the upper and lower price levels from the middle price
     double upper_level = mid_price + adjusted_gap;
