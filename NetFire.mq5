@@ -1,8 +1,3 @@
-//+------------------------------------------------------------------+
-//|                                                      NetFire.mq5 |
-//|                        Copyright 2025, Bodhidharma Ong          |
-//|                                             https://www.mql5.com |
-//+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Bodhidharma Ong"
 #property link      "https://www.mql5.com"
 #property version   "1.00"
@@ -19,18 +14,18 @@ enum MODE_TL {
 
 // Input parameters grouped for better organization
 sinput group "=== Trading Settings ==="
-input double g_initial_gap = 20.0;                    // Initial gap for trendlines
-input int g_magic = 12345;                             // Magic number
-input double g_sl_pips = 50;                           // Stop loss in pips
-input double g_bep_trigger_pips = 30;                  // Break-even trigger in pips
-input int g_max_attempts = 10;                         // Maximum trading attempts
+input double g_initial_gap = 20.0; // Initial gap for trendlines
+input int g_magic = 12345; // Magic number
+input double g_sl_pips = 50; // Stop loss in pips
+input double g_bep_trigger_pips = 30; // Break-even trigger in pips
+input int g_max_attempts = 10; // Maximum trading attempts
 input string g_tp_set = "200, 250, 300, 350, 400, 300, 300, 400, 400, 400"; // Take profit levels
 input string g_lot_set = "0.1, 0.1, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8"; // Lot sizes
-input bool g_start_in_edit_mode = true;                // Start in edit mode by default
+input bool g_start_in_edit_mode = true; // Start in edit mode by default
 
 sinput group "=== Mode Settings ==="
-input MODE_TL g_tl_mode = MODE_TL_LIMIT;               // Trading mode
-input double g_mid_gap = 20;                           // Gap for MID mode
+input MODE_TL g_tl_mode = MODE_TL_LIMIT; // Trading mode
+input double g_mid_gap = 20; // Gap for MID mode
 
 // Global variables
 int g_state = 0;
@@ -63,15 +58,14 @@ datetime g_last_lower_tl_time = 0;
 static bool g_last_mode_was_edit = true;
 
 MODE_TL g_tl_mode_active;
+bool g_mid_to_stop_switch = false; // Flag to indicate mode switched from MID to STOP
 
 // Trade objects
 CTrade g_trade;
 CPositionInfo g_position;
 COrderInfo g_order;
 
-//+------------------------------------------------------------------+
-//| Trendline class for MQL5                                         |
-//+------------------------------------------------------------------+
+
 class CTrendline {
 public:
     string name;
@@ -118,9 +112,6 @@ public:
 CTrendline g_tl_upper;
 CTrendline g_tl_lower;
 
-//+------------------------------------------------------------------+
-//| Expert initialization function                                   |
-//+------------------------------------------------------------------+
 int OnInit() {
     // Set trade parameters
     g_trade.SetExpertMagicNumber(g_magic);
@@ -159,9 +150,6 @@ int OnInit() {
     return(INIT_SUCCEEDED);
 }
 
-//+------------------------------------------------------------------+
-//| Expert deinitialization function                                |
-//+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
     // Only delete objects when the EA is being removed, not when switching timeframes
     if(reason != REASON_CHARTCHANGE) {
@@ -185,9 +173,6 @@ void OnDeinit(const int reason) {
     }
 }
 
-//+------------------------------------------------------------------+
-//| Expert tick function                                             |
-//+------------------------------------------------------------------+
 void OnTick() {
     // Always process button clicks, even when cycle is done
     ProcessButtonClicks();
@@ -260,10 +245,12 @@ void OnTick() {
                 
             case MODE_TL_MID:
                 if(SymbolInfoDouble(_Symbol, SYMBOL_ASK) > upper_price) {
+                    g_mid_to_stop_switch = true; // Set flag to use original gap without multiplier
                     CreateLines(g_mid_gap * _Point);
                     g_tl_mode_active = MODE_TL_STOP;
                     return;
                 } else if(SymbolInfoDouble(_Symbol, SYMBOL_BID) < lower_price) {
+                    g_mid_to_stop_switch = true; // Set flag to use original gap without multiplier
                     CreateLines(g_mid_gap * _Point);
                     g_tl_mode_active = MODE_TL_STOP;
                     return;
@@ -292,9 +279,6 @@ void OnTick() {
     }
 }
 
-//+------------------------------------------------------------------+
-//| OnChartEvent function                                            |
-//+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
     if(id == CHARTEVENT_CHART_CHANGE) {
         int chart_height = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
@@ -303,9 +287,6 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
     }
 }
 
-//+------------------------------------------------------------------+
-//| Helper Functions                                                 |
-//+------------------------------------------------------------------+
 bool IsPositionClosed(ulong ticket) {
     return !g_position.SelectByTicket(ticket);
 }
@@ -350,9 +331,6 @@ int CountPositions(ENUM_POSITION_TYPE type) {
     return count;
 }
 
-//+------------------------------------------------------------------+
-//| Trail Monitor function                                           |
-//+------------------------------------------------------------------+
 void TrailMonitor() {
     if(g_state >= 4) {
         if(g_monitor_bep_level && IsPositionClosed(g_recent_ticket)) {
@@ -397,9 +375,6 @@ void TrailMonitor() {
     }
 }
 
-//+------------------------------------------------------------------+
-//| PingPong function                                                |
-//+------------------------------------------------------------------+
 void PingPong() {
     if(g_state > 0 && g_state < g_max_attempts) {
         if(g_fix_upper > 0 && SymbolInfoDouble(_Symbol, SYMBOL_ASK) > g_fix_upper) {
@@ -434,9 +409,6 @@ void PingPong() {
     }
 }
 
-//+------------------------------------------------------------------+
-//| Open Sell Position                                               |
-//+------------------------------------------------------------------+
 void OpenSell() {
     double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
     double stoploss = bid + g_sl_pips * _Point;
@@ -478,9 +450,6 @@ void OpenSell() {
     }
 }
 
-//+------------------------------------------------------------------+
-//| Open Buy Position                                                |
-//+------------------------------------------------------------------+
 void OpenBuy() {
     double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
     double stoploss = ask - g_sl_pips * _Point;
@@ -522,9 +491,6 @@ void OpenBuy() {
     }
 }
 
-//+------------------------------------------------------------------+
-//| Create Lines function                                            |
-//+------------------------------------------------------------------+
 void CreateLines(double gap_pt) {
     double mid_price = (SymbolInfoDouble(_Symbol, SYMBOL_BID) + SymbolInfoDouble(_Symbol, SYMBOL_ASK)) / 2;
     
@@ -542,7 +508,14 @@ void CreateLines(double gap_pt) {
         default: timeframe_gap_multiplier = 10.0; break;
     }
     
-    double adjusted_gap = gap_pt * timeframe_gap_multiplier;
+    // Apply the timeframe multiplier to the gap (skip if switching from MID to STOP)
+    double adjusted_gap;
+    if(g_mid_to_stop_switch) {
+        adjusted_gap = gap_pt; // Use original gap without multiplier when switching from MID to STOP
+        g_mid_to_stop_switch = false; // Reset the flag after use
+    } else {
+        adjusted_gap = gap_pt * timeframe_gap_multiplier;
+    }
     double upper_level = mid_price + adjusted_gap;
     double lower_level = mid_price - adjusted_gap;
 
@@ -565,9 +538,6 @@ void CreateLines(double gap_pt) {
     g_last_lower_tl_time = 0;
 }
 
-//+------------------------------------------------------------------+
-//| String to Array Double function                                  |
-//+------------------------------------------------------------------+
 void StringToArrayDouble(string input_string, double &output_array[]) {
     string clean_string = StringTrimRight(StringTrimLeft(input_string));
     
@@ -600,9 +570,6 @@ void StringToArrayDouble(string input_string, double &output_array[]) {
     }
 }
 
-//+------------------------------------------------------------------+
-//| Edit Button Functions                                            |
-//+------------------------------------------------------------------+
 void CreateEditButton() {
     int chart_height = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
     
